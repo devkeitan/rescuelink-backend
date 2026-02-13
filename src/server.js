@@ -60,18 +60,28 @@ const corsOptions = {
     if (!origin) return callback(null, true);
     
     const allowedOrigins = [
-      'http://192.168.1.29:3000',
+       'http://192.168.1.29:3000',
       'http://localhost:3000',
-      'https://rescuelink-backend-j0gz.onrender.com/api-docs/',
-      'https://rescuelink-backend.onrender.com/api/v1',
-      /\.vercel\.app$/,
+      'http://localhost:5173',
+      'http://127.0.0.1:3000',
+      'https://rescuelink-backend-j0gz.onrender.com',
+     
     ];
-    
+     
+    const allowedPatterns = [
+      /\.vercel\.app$/,
+      /\.netlify\.app$/,
+    ];
+
     if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+      return callback(null, true);
     }
+    if (allowedPatterns.some(pattern => pattern.test(origin))) {
+      return callback(null, true);
+    } 
+    
+      callback(new Error('Not allowed by CORS'));
+
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -81,6 +91,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
