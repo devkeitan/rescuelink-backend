@@ -24,12 +24,14 @@ const swaggerOptions = {
         email: 'support@rescuelink.com',
       },
     },
-    servers: [
+   servers: [
       {
-        url: process.env.NODE_ENV === 'production'
-          ? 'https://rescuelink-backend-j0gz.onrender.com'
-          : 'http://localhost:5000',
-        description: process.env.NODE_ENV === 'production' ? 'Production server' : 'Development server',
+        url: 'https://rescuelink-backend-j0gz.onrender.com',
+        description: 'Production server (Render)',
+      },
+      {
+        url: 'http://localhost:5000',
+        description: 'Local development server',
       },
     ],
     components: {
