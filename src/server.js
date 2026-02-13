@@ -62,6 +62,8 @@ const corsOptions = {
     const allowedOrigins = [
       'http://192.168.1.29:3000',
       'http://localhost:3000',
+      'https://rescuelink-backend-j0gz.onrender.com/api-docs/',
+      /\.vercel\.app$/,
     ];
     
     if (allowedOrigins.indexOf(origin) !== -1) {
