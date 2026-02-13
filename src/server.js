@@ -63,6 +63,7 @@ const corsOptions = {
       'http://192.168.1.29:3000',
       'http://localhost:3000',
       'https://rescuelink-backend-j0gz.onrender.com/api-docs/',
+      'https://rescuelink-backend.onrender.com/api/v1',
       /\.vercel\.app$/,
     ];
     
