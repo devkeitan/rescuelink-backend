@@ -270,7 +270,7 @@ router.put('/:id', async (req, res) => {
     if (!['admin', 'dispatcher'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Access denied' });
     }
-
+    
     const updateData = {
       ...req.body,
       updated_at: new Date().toISOString(),
@@ -348,15 +348,7 @@ router.patch('/:id/status', async (req, res) => {
       updated_at: new Date().toISOString(),
     };
 
-    // Set timestamps based on status
-    if (status === 'responding' && !updateData.responded_at) {
-      updateData.responded_at = new Date().toISOString();
-    }
-    if (status === 'resolved' && !updateData.resolved_at) {
-      updateData.resolved_at = new Date().toISOString();
-    }
-
-    const { data, error } = await supabase
+     const { data, error } = await supabase
       .from('alerts')
       .update(updateData)
       .eq('id', req.params.id)
@@ -364,6 +356,15 @@ router.patch('/:id/status', async (req, res) => {
       .single();
 
     if (error) throw error;
+
+ if (status === 'responding' && data.assigned_vehicle_id) {
+      await supabase.from('vehicles').update({ status: 'responding' }).eq('id', data.assigned_vehicle_id);
+    }
+
+    if (status === 'resolved' && data.assigned_vehicle_id) {
+      await supabase.from('vehicles').update({ status: 'available' }).eq('id', data.assigned_vehicle_id);
+    }
+
     res.json(data);
   } catch (error) {
     console.error('Update status error:', error);
@@ -404,10 +405,18 @@ router.patch('/:id/assign', async (req, res) => {
   try {
     const { vehicle_id, responder_id } = req.body;
 
-    // Only admin/dispatcher can assign
     if (!['admin', 'dispatcher'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Access denied' });
     }
+
+    // FIX: Use different variable names to avoid redeclaration conflict
+    const { data: currentAlert, error: currentAlertError } = await supabase
+      .from('alerts')
+      .select('assigned_vehicle_id')
+      .eq('id', req.params.id)
+      .single();
+
+    if (currentAlertError) throw currentAlertError;
 
     const updateData = {
       assigned_vehicle_id: vehicle_id || null,
@@ -415,24 +424,48 @@ router.patch('/:id/assign', async (req, res) => {
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await supabase
+    // FIX: Use a distinct variable name for the updated alert
+    const { data: updatedAlert, error: updateError } = await supabase
       .from('alerts')
       .update(updateData)
       .eq('id', req.params.id)
       .select(`
         *,
-        vehicle:assigned_vehicle_id(id, license_plate, vehicle_type),
+        vehicle:assigned_vehicle_id(id, license_plate, vehicle_type, status),
         responder:assigned_responder_id(id, first_name, last_name)
       `)
       .single();
 
-    if (error) throw error;
-    res.json(data);
+    if (updateError) throw updateError;
+
+    // Update old vehicle back to available (if it was replaced)
+    if (
+      currentAlert?.assigned_vehicle_id &&
+      currentAlert.assigned_vehicle_id !== vehicle_id
+    ) {
+      await supabase
+        .from('vehicles')
+        .update({ status: 'available' })
+        .eq('id', currentAlert.assigned_vehicle_id);
+    }
+
+    // Update new vehicle to assigned
+    if (vehicle_id) {
+      const { error: vehicleError } = await supabase
+        .from('vehicles')
+        .update({ status: 'assigned' })
+        .eq('id', vehicle_id);
+
+      if (vehicleError) console.error('Vehicle status update failed:', vehicleError);
+    }
+
+    res.json(updatedAlert);
   } catch (error) {
     console.error('Assign alert error:', error);
     res.status(500).json({ message: error.message || 'Server error' });
   }
 });
+
 
 /**
  * @swagger
