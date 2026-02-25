@@ -4,18 +4,17 @@ const path = require('path');
 const supabase = require('../config/supabase');
 const authMiddleware = require('../middleware/auth');
 const { getIO } = require('../socketInstance');
+const { uploadFile } = require('../services/uploadService'); // <-- import service
 const router = express.Router();
 
 // Protect all routes
 router.use(authMiddleware);
 
-// -------------------------------------------------------------------
-// Multer configuration for image upload
-// -------------------------------------------------------------------
+// Multer configuration (same as before)
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
   fileFilter: (req, file, cb) => {
     const filetypes = /jpeg|jpg|png|gif|webp/;
     const mimetype = filetypes.test(file.mimetype);
@@ -32,7 +31,6 @@ const upload = multer({
  * /api/v1/alerts/upload-image:
  *   post:
  *     summary: Upload an image for an alert
- *     description: Uploads an image to Supabase storage and returns the public URL. The image can then be used in alert creation.
  *     tags: [Alerts]
  *     security:
  *       - bearerAuth: []
@@ -43,7 +41,6 @@ const upload = multer({
  *         name: image
  *         type: file
  *         required: true
- *         description: Image file to upload (jpeg, jpg, png, gif, webp)
  *     responses:
  *       200:
  *         description: Image uploaded successfully
@@ -54,48 +51,26 @@ const upload = multer({
  *               properties:
  *                 url:
  *                   type: string
- *                   example: https://your-project.supabase.co/storage/v1/object/public/alert-images/alerts/12345.jpg
- *       400:
- *         description: No file uploaded or invalid file type
- *       500:
- *         description: Server error
  */
-router.post('/upload-image', authMiddleware, upload.single('image'), async (req, res) => {
+router.post('/upload-image', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No image file uploaded' });
     }
 
-    const file = req.file;
-    const fileExt = path.extname(file.originalname);
-    const fileName = `${req.user.id}_${Date.now()}${fileExt}`;
-    const filePath = `alerts/${fileName}`; // optional folder inside bucket
-
-    // Upload to Supabase storage
-    const { data, error } = await supabase.storage
-      .from('alert-images')
-      .upload(filePath, file.buffer, {
-        contentType: file.mimetype,
-        cacheControl: '3600',
-        upsert: false
-      });
-
-    if (error) {
-      console.error('Supabase storage upload error:', error);
-      return res.status(500).json({ message: 'Failed to upload image' });
-    }
-
-    // Get public URL
-    const { data: publicUrlData } = supabase.storage
-      .from('alert-images')
-      .getPublicUrl(filePath);
-
-    const publicUrl = publicUrlData.publicUrl;
+    // Use the upload service
+    const publicUrl = await uploadFile({
+      fileBuffer: req.file.buffer,
+      originalName: req.file.originalname,
+      userId: req.user.id,
+      bucket: 'alert-images',
+      folder: 'alerts',
+      contentType: req.file.mimetype
+    });
 
     res.status(200).json({ url: publicUrl });
   } catch (error) {
     console.error('Upload image error:', error);
-    // Handle multer errors (like file too large)
     if (error instanceof multer.MulterError) {
       return res.status(400).json({ message: error.message });
     }
