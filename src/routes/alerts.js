@@ -1,13 +1,107 @@
 const express = require('express');
+const multer = require('multer');
+const path = require('path');
 const supabase = require('../config/supabase');
 const authMiddleware = require('../middleware/auth');
 const { getIO } = require('../socketInstance');
 const router = express.Router();
 
-
-
 // Protect all routes
 router.use(authMiddleware);
+
+// -------------------------------------------------------------------
+// Multer configuration for image upload
+// -------------------------------------------------------------------
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  fileFilter: (req, file, cb) => {
+    const filetypes = /jpeg|jpg|png|gif|webp/;
+    const mimetype = filetypes.test(file.mimetype);
+    const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
+    if (mimetype && extname) {
+      return cb(null, true);
+    }
+    cb(new Error('Only image files are allowed (jpeg, jpg, png, gif, webp)'));
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/alerts/upload-image:
+ *   post:
+ *     summary: Upload an image for an alert
+ *     description: Uploads an image to Supabase storage and returns the public URL. The image can then be used in alert creation.
+ *     tags: [Alerts]
+ *     security:
+ *       - bearerAuth: []
+ *     consumes:
+ *       - multipart/form-data
+ *     parameters:
+ *       - in: formData
+ *         name: image
+ *         type: file
+ *         required: true
+ *         description: Image file to upload (jpeg, jpg, png, gif, webp)
+ *     responses:
+ *       200:
+ *         description: Image uploaded successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 url:
+ *                   type: string
+ *                   example: https://your-project.supabase.co/storage/v1/object/public/alert-images/alerts/12345.jpg
+ *       400:
+ *         description: No file uploaded or invalid file type
+ *       500:
+ *         description: Server error
+ */
+router.post('/upload-image', authMiddleware, upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image file uploaded' });
+    }
+
+    const file = req.file;
+    const fileExt = path.extname(file.originalname);
+    const fileName = `${req.user.id}_${Date.now()}${fileExt}`;
+    const filePath = `alerts/${fileName}`; // optional folder inside bucket
+
+    // Upload to Supabase storage
+    const { data, error } = await supabase.storage
+      .from('alert-images')
+      .upload(filePath, file.buffer, {
+        contentType: file.mimetype,
+        cacheControl: '3600',
+        upsert: false
+      });
+
+    if (error) {
+      console.error('Supabase storage upload error:', error);
+      return res.status(500).json({ message: 'Failed to upload image' });
+    }
+
+    // Get public URL
+    const { data: publicUrlData } = supabase.storage
+      .from('alert-images')
+      .getPublicUrl(filePath);
+
+    const publicUrl = publicUrlData.publicUrl;
+
+    res.status(200).json({ url: publicUrl });
+  } catch (error) {
+    console.error('Upload image error:', error);
+    // Handle multer errors (like file too large)
+    if (error instanceof multer.MulterError) {
+      return res.status(400).json({ message: error.message });
+    }
+    res.status(500).json({ message: error.message || 'Server error' });
+  }
+});
 
 /**
  * @swagger
@@ -247,10 +341,9 @@ router.post('/', async (req, res) => {
     if (error) throw error;
 
     const io = getIO();
-io.emit("alert:new", data);
+    io.emit("alert:new", data);
 
     res.status(201).json(data);
-
 
   } catch (error) {
     console.error('Create alert error:', error);
@@ -312,7 +405,7 @@ router.put('/:id', async (req, res) => {
     }
 
     const io = getIO();
-io.emit("alert:updated", data);
+    io.emit("alert:updated", data);
 
     res.json(data);
   } catch (error) {
@@ -370,7 +463,7 @@ router.patch('/:id/status', async (req, res) => {
       updated_at: new Date().toISOString(),
     };
 
-     const { data, error } = await supabase
+    const { data, error } = await supabase
       .from('alerts')
       .update(updateData)
       .eq('id', req.params.id)
@@ -379,7 +472,7 @@ router.patch('/:id/status', async (req, res) => {
 
     if (error) throw error;
 
- if (status === 'responding' && data.assigned_vehicle_id) {
+    if (status === 'responding' && data.assigned_vehicle_id) {
       await supabase.from('vehicles').update({ status: 'responding' }).eq('id', data.assigned_vehicle_id);
     }
 
@@ -387,13 +480,10 @@ router.patch('/:id/status', async (req, res) => {
       await supabase.from('vehicles').update({ status: 'available' }).eq('id', data.assigned_vehicle_id);
     }
 
-
-        const io = getIO();
-io.emit("alert:status_updated", data);
+    const io = getIO();
+    io.emit("alert:status_updated", data);
 
     res.json(data);
-
-
 
   } catch (error) {
     console.error('Update status error:', error);
@@ -439,7 +529,6 @@ router.patch('/:id/assign', async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    // FIX: Use different variable names to avoid redeclaration conflict
     const { data: currentAlert, error: currentAlertError } = await supabase
       .from('alerts')
       .select('assigned_vehicle_id')
@@ -454,7 +543,6 @@ router.patch('/:id/assign', async (req, res) => {
       updated_at: new Date().toISOString(),
     };
 
-    // FIX: Use a distinct variable name for the updated alert
     const { data: updatedAlert, error: updateError } = await supabase
       .from('alerts')
       .update(updateData)
@@ -490,7 +578,7 @@ router.patch('/:id/assign', async (req, res) => {
     }
 
     const io = getIO();
-io.emit("alert:assigned", updatedAlert);
+    io.emit("alert:assigned", updatedAlert);
 
     res.json(updatedAlert);
   } catch (error) {
@@ -498,7 +586,6 @@ io.emit("alert:assigned", updatedAlert);
     res.status(500).json({ message: error.message || 'Server error' });
   }
 });
-
 
 /**
  * @swagger
@@ -531,7 +618,7 @@ router.delete('/:id', async (req, res) => {
     if (error) throw error;
 
     const io = getIO();
-io.emit("alert:deleted", { id: req.params.id });
+    io.emit("alert:deleted", { id: req.params.id });
 
     res.json({ message: 'Alert deleted successfully' });
   } catch (error) {

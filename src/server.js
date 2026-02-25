@@ -16,6 +16,8 @@ const emergencyContactsRoutes = require('./routes/emergencyContacts');
 const crashRoutes = require ('./routes/crash')
 const responderRoutes = require ('./routes/responders')
 const geolocationRoutes = require('./routes/geolocation');
+const allAlertsRouter = require('./routes/allAlerts');
+const reportsRouter = require('./routes/reports');
 
 const { initSocket } = require('./socket');
 const { setIO } = require('./socketInstance');
@@ -117,6 +119,10 @@ app.use('/api/v1/crash', crashRoutes);
 // ADMIN ROUTES
 app.use('/api/v1/vehicles', vehicleRoutes);
 app.use('/api/v1/responders', responderRoutes);
+app.use('/api/v1/allAlerts', allAlertsRouter);
+app.use('/api/v1/reports', reportsRouter);
+
+
 
 app.use('/api/v1/emergency-contacts', emergencyContactsRoutes);
 
