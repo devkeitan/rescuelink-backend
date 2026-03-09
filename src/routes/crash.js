@@ -1,9 +1,18 @@
 const express = require('express');
 const supabase = require('../config/supabase');
 const authMiddleware = require('../middleware/auth');
+const { getIO } = require('../socketInstance'); // ← add this import
 
 const router = express.Router();
 router.use(authMiddleware);
+
+const CRASH_SELECT = `
+  *,
+  user:user_id(id, first_name, last_name),
+  responder:responder_id(id, first_name, last_name, user_phone_number),
+  vehicle:vehicle_id(id, license_plate, vehicle_type, model, status)
+`;
+
 
 /**
  * @swagger
@@ -11,6 +20,7 @@ router.use(authMiddleware);
  *   name: Crash Detection
  *   description: Automatic crash detection from mobile sensors
  */
+
 
 /**
  * @swagger
@@ -70,6 +80,12 @@ router.use(authMiddleware);
  *         network_type:
  *           type: string
  *           nullable: true
+ *         vehicle_id:
+ *           type: integer
+ *           nullable: true
+ *         responder_id:
+ *           type: integer
+ *           nullable: true
  *         created_at:
  *           type: string
  *           format: date-time
@@ -84,6 +100,32 @@ router.use(authMiddleware);
  *             first_name:
  *               type: string
  *             last_name:
+ *               type: string
+ *         responder:
+ *           type: object
+ *           nullable: true
+ *           properties:
+ *             id:
+ *               type: integer
+ *             first_name:
+ *               type: string
+ *             last_name:
+ *               type: string
+ *             user_phone_number:
+ *               type: string
+ *         vehicle:
+ *           type: object
+ *           nullable: true
+ *           properties:
+ *             id:
+ *               type: integer
+ *             license_plate:
+ *               type: string
+ *             vehicle_type:
+ *               type: string
+ *             model:
+ *               type: string
+ *             status:
  *               type: string
  *
  *     CrashEventUpdate:
@@ -111,6 +153,12 @@ router.use(authMiddleware);
  *         status:
  *           type: string
  *           enum: [pending, responding, resolved, cancelled]
+ *         vehicle_id:
+ *           type: integer
+ *           nullable: true
+ *         responder_id:
+ *           type: integer
+ *           nullable: true
  *         sent_at:
  *           type: string
  *           format: date-time
@@ -130,6 +178,7 @@ router.use(authMiddleware);
  *           type: string
  *           nullable: true
  */
+
 
 /**
  * @swagger
@@ -153,58 +202,31 @@ router.use(authMiddleware);
  *               latitude:
  *                 type: number
  *                 format: float
- *                 description: Latitude of the crash location
  *                 example: 14.5995
  *               longitude:
  *                 type: number
  *                 format: float
- *                 description: Longitude of the crash location
  *                 example: 120.9842
  *               impact_force:
  *                 type: number
  *                 format: float
- *                 description: Impact force measured by accelerometer (g‑force)
  *                 example: 8.5
  *               device_battery:
  *                 type: integer
- *                 description: Battery level at time of crash (percentage)
  *                 example: 87
  *               network_type:
  *                 type: string
- *                 description: Type of network connection (wifi, 4g, 5g, etc.)
  *                 example: "4g"
  *     responses:
  *       201:
  *         description: Crash event created successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: Crash event recorded
- *                 event:
- *                   $ref: '#/components/schemas/CrashEvent'
- *       400:
- *         description: Missing required fields (latitude/longitude)
- *       500:
- *         description: Server error
  */
 router.post('/', async (req, res) => {
   try {
-    const {
-      latitude,
-      longitude,
-      impact_force,
-      device_battery,
-      network_type
-    } = req.body;
+    const { latitude, longitude, impact_force, device_battery, network_type } = req.body;
 
     if (!latitude || !longitude) {
-      return res.status(400).json({
-        message: 'Latitude and longitude are required'
-      });
+      return res.status(400).json({ message: 'Latitude and longitude are required' });
     }
 
     const crashEvent = {
@@ -222,24 +244,22 @@ router.post('/', async (req, res) => {
     const { data, error } = await supabase
       .from('crash_events')
       .insert([crashEvent])
-      .select(`
-        *,
-        user:user_id(id, first_name, last_name)
-      `)
+      .select(CRASH_SELECT)
       .single();
 
     if (error) throw error;
 
-    res.status(201).json({
-      message: 'Crash event recorded',
-      event: data
-    });
+    const io = getIO();
+    io.emit('crash:new', data);
+
+    res.status(201).json({ message: 'Crash event recorded', event: data });
 
   } catch (error) {
     console.error('Crash detection error:', error);
     res.status(500).json({ message: error.message });
   }
 });
+
 
 /**
  * @swagger
@@ -256,59 +276,29 @@ router.post('/', async (req, res) => {
  *         schema:
  *           type: string
  *           enum: [pending, responding, resolved, cancelled]
- *         description: Filter by event status
  *       - in: query
  *         name: from
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Start date (ISO format, e.g., 2025-01-01T00:00:00Z) – filters on triggered_at
  *       - in: query
  *         name: to
  *         schema:
  *           type: string
  *           format: date-time
- *         description: End date (ISO format) – filters on triggered_at
  *       - in: query
  *         name: limit
  *         schema:
  *           type: integer
  *           default: 20
- *           minimum: 1
- *           maximum: 100
- *         description: Number of records to return
  *       - in: query
  *         name: offset
  *         schema:
  *           type: integer
  *           default: 0
- *           minimum: 0
- *         description: Offset for pagination
  *     responses:
  *       200:
  *         description: List of crash events with pagination info
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/CrashEvent'
- *                 pagination:
- *                   type: object
- *                   properties:
- *                     total:
- *                       type: integer
- *                     limit:
- *                       type: integer
- *                     offset:
- *                       type: integer
- *                     returned:
- *                       type: integer
- *       500:
- *         description: Server error
  */
 router.get('/', async (req, res) => {
   try {
@@ -316,22 +306,13 @@ router.get('/', async (req, res) => {
 
     let query = supabase
       .from('crash_events')
-      .select(`
-        *,
-        user:user_id(id, first_name, last_name)
-      `, { count: 'exact' })
+      .select(CRASH_SELECT, { count: 'exact' })
       .eq('event_type', 'AUTO_CRASH')
       .order('triggered_at', { ascending: false });
 
-    if (status) {
-      query = query.eq('status', status);
-    }
-    if (from) {
-      query = query.gte('triggered_at', from);
-    }
-    if (to) {
-      query = query.lte('triggered_at', to);
-    }
+    if (status) query = query.eq('status', status);
+    if (from)   query = query.gte('triggered_at', from);
+    if (to)     query = query.lte('triggered_at', to);
 
     if (req.user.role === 'user') {
       query = query.eq('user_id', req.user.id);
@@ -361,12 +342,12 @@ router.get('/', async (req, res) => {
   }
 });
 
+
 /**
  * @swagger
- * /api/v1/crash/{id}:
- *   put:
- *     summary: Fully update a crash event
- *     description: Replace all updatable fields of a crash event. Regular users can only update their own events.
+ * /api/v1/crash/{id}/assign:
+ *   patch:
+ *     summary: Assign vehicle and responder to a crash (Admin/Dispatcher only)
  *     tags: [Crash Detection]
  *     security:
  *       - bearerAuth: []
@@ -376,82 +357,159 @@ router.get('/', async (req, res) => {
  *         required: true
  *         schema:
  *           type: integer
- *         description: ID of the crash event
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/CrashEventUpdate'
+ *             type: object
+ *             properties:
+ *               vehicle_id:
+ *                 type: integer
+ *               responder_id:
+ *                 type: integer
+ *               status:
+ *                 type: string
+ *                 example: responding
  *     responses:
  *       200:
- *         description: Crash event updated successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: Crash event updated
- *                 event:
- *                   $ref: '#/components/schemas/CrashEvent'
+ *         description: Assignment successful
  *       403:
- *         description: Forbidden – you do not own this event
- *       404:
- *         description: Crash event not found
- *       500:
- *         description: Server error
+ *         description: Access denied
  */
-router.put('/:id', async (req, res) => {
+router.patch('/:id/assign', async (req, res) => {
   try {
-    const { id } = req.params;
-    const updates = req.body;
+    const { vehicle_id, responder_id, status } = req.body;
 
-    // First, fetch the existing event to check ownership
-    const { data: existing, error: fetchError } = await supabase
+    if (!['admin', 'dispatcher'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    // Get current crash to track old vehicle
+    const { data: currentCrash, error: fetchError } = await supabase
       .from('crash_events')
-      .select('user_id')
-      .eq('id', id)
+      .select('vehicle_id')
+      .eq('id', req.params.id)
       .single();
 
-    if (fetchError || !existing) {
-      return res.status(404).json({ message: 'Crash event not found' });
+    if (fetchError) throw fetchError;
+
+    const updateData = {
+      vehicle_id: vehicle_id || null,
+      responder_id: responder_id || null,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (status) updateData.status = status;
+
+    const { data: updatedCrash, error: updateError } = await supabase
+      .from('crash_events')
+      .update(updateData)
+      .eq('id', req.params.id)
+      .select(CRASH_SELECT)
+      .single();
+
+    if (updateError) throw updateError;
+
+    // Free old vehicle if it was replaced
+    if (currentCrash?.vehicle_id && currentCrash.vehicle_id !== vehicle_id) {
+      await supabase
+        .from('vehicles')
+        .update({ status: 'available' })
+        .eq('id', currentCrash.vehicle_id);
     }
 
-    // Authorization: user can only update if owner or not a regular user
-    if (req.user.role === 'user' && existing.user_id !== req.user.id) {
-      return res.status(403).json({ message: 'You do not have permission to update this event' });
+    // Mark new vehicle as assigned
+    if (vehicle_id) {
+      await supabase
+        .from('vehicles')
+        .update({ status: 'assigned' })
+        .eq('id', vehicle_id);
     }
 
-    // Remove fields that should never be updated directly
-    delete updates.id;
-    delete updates.user_id;
-    delete updates.event_type;
-    delete updates.created_at;
-    delete updates.updated_at;
-    delete updates.triggered_at;   // triggered_at is set once at creation
+    const io = getIO();
+    io.emit('crash:assigned', updatedCrash);
 
-    // Perform the update
+    res.json(updatedCrash);
+  } catch (error) {
+    console.error('Assign crash error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/crash/{id}/status:
+ *   patch:
+ *     summary: Update crash event status
+ *     tags: [Crash Detection]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [status]
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [pending, responding, resolved, cancelled]
+ *     responses:
+ *       200:
+ *         description: Status updated
+ */
+router.patch('/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+
+    const validStatuses = ['pending', 'responding', 'resolved', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ message: 'Invalid status' });
+    }
+
+    if (!['admin', 'dispatcher', 'responder'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
     const { data, error } = await supabase
       .from('crash_events')
-      .update(updates)
-      .eq('id', id)
-      .select(`
-        *,
-        user:user_id(id, first_name, last_name)
-      `)
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select(CRASH_SELECT)
       .single();
 
     if (error) throw error;
 
-    res.json({
-      message: 'Crash event updated',
-      event: data
-    });
+    // Free vehicle when resolved or cancelled
+    if ((status === 'resolved' || status === 'cancelled') && data.vehicle_id) {
+      await supabase
+        .from('vehicles')
+        .update({ status: 'available' })
+        .eq('id', data.vehicle_id);
+    }
 
+    // Mark vehicle as responding when status is responding
+    if (status === 'responding' && data.vehicle_id) {
+      await supabase
+        .from('vehicles')
+        .update({ status: 'responding' })
+        .eq('id', data.vehicle_id);
+    }
+
+    const io = getIO();
+    io.emit('crash:status_updated', data);
+
+    res.json(data);
   } catch (error) {
-    console.error('Update crash event error:', error);
+    console.error('Update crash status error:', error);
     res.status(500).json({ message: error.message });
   }
 });
@@ -459,9 +517,8 @@ router.put('/:id', async (req, res) => {
 /**
  * @swagger
  * /api/v1/crash/{id}:
- *   patch:
- *     summary: Partially update a crash event
- *     description: Update only the provided fields of a crash event. Regular users can only update their own events.
+ *   put:
+ *     summary: Fully update a crash event
  *     tags: [Crash Detection]
  *     security:
  *       - bearerAuth: []
@@ -471,7 +528,6 @@ router.put('/:id', async (req, res) => {
  *         required: true
  *         schema:
  *           type: integer
- *         description: ID of the crash event
  *     requestBody:
  *       required: true
  *       content:
@@ -481,29 +537,16 @@ router.put('/:id', async (req, res) => {
  *     responses:
  *       200:
  *         description: Crash event updated successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: Crash event updated
- *                 event:
- *                   $ref: '#/components/schemas/CrashEvent'
  *       403:
- *         description: Forbidden – you do not own this event
+ *         description: Forbidden
  *       404:
  *         description: Crash event not found
- *       500:
- *         description: Server error
  */
-router.patch('/:id', async (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
 
-    // First, fetch the existing event to check ownership
     const { data: existing, error: fetchError } = await supabase
       .from('crash_events')
       .select('user_id')
@@ -514,12 +557,10 @@ router.patch('/:id', async (req, res) => {
       return res.status(404).json({ message: 'Crash event not found' });
     }
 
-    // Authorization: user can only update if owner or not a regular user
     if (req.user.role === 'user' && existing.user_id !== req.user.id) {
       return res.status(403).json({ message: 'You do not have permission to update this event' });
     }
 
-    // Remove immutable fields
     delete updates.id;
     delete updates.user_id;
     delete updates.event_type;
@@ -527,36 +568,29 @@ router.patch('/:id', async (req, res) => {
     delete updates.updated_at;
     delete updates.triggered_at;
 
-    // Perform the update
     const { data, error } = await supabase
       .from('crash_events')
       .update(updates)
       .eq('id', id)
-      .select(`
-        *,
-        user:user_id(id, first_name, last_name)
-      `)
+      .select(CRASH_SELECT)
       .single();
 
     if (error) throw error;
 
-    res.json({
-      message: 'Crash event updated',
-      event: data
-    });
+    res.json({ message: 'Crash event updated', event: data });
 
   } catch (error) {
-    console.error('Patch crash event error:', error);
+    console.error('Update crash event error:', error);
     res.status(500).json({ message: error.message });
   }
 });
 
+
 /**
  * @swagger
  * /api/v1/crash/{id}:
- *   delete:
- *     summary: Delete a crash event
- *     description: Permanently remove a crash event. Regular users can only delete their own events.
+ *   patch:
+ *     summary: Partially update a crash event
  *     tags: [Crash Detection]
  *     security:
  *       - bearerAuth: []
@@ -566,30 +600,25 @@ router.patch('/:id', async (req, res) => {
  *         required: true
  *         schema:
  *           type: integer
- *         description: ID of the crash event
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CrashEventUpdate'
  *     responses:
  *       200:
- *         description: Crash event deleted successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: Crash event deleted
+ *         description: Crash event updated successfully
  *       403:
- *         description: Forbidden – you do not own this event
+ *         description: Forbidden
  *       404:
  *         description: Crash event not found
- *       500:
- *         description: Server error
  */
-router.delete('/:id', async (req, res) => {
+router.patch('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const updates = req.body;
 
-    // First, fetch the existing event to check ownership
     const { data: existing, error: fetchError } = await supabase
       .from('crash_events')
       .select('user_id')
@@ -600,7 +629,71 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ message: 'Crash event not found' });
     }
 
-    // Authorization: user can only delete if owner or not a regular user
+    if (req.user.role === 'user' && existing.user_id !== req.user.id) {
+      return res.status(403).json({ message: 'You do not have permission to update this event' });
+    }
+
+    delete updates.id;
+    delete updates.user_id;
+    delete updates.event_type;
+    delete updates.created_at;
+    delete updates.updated_at;
+    delete updates.triggered_at;
+
+    const { data, error } = await supabase
+      .from('crash_events')
+      .update(updates)
+      .eq('id', id)
+      .select(CRASH_SELECT)
+      .single();
+
+    if (error) throw error;
+
+    res.json({ message: 'Crash event updated', event: data });
+
+  } catch (error) {
+    console.error('Patch crash event error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+/**
+ * @swagger
+ * /api/v1/crash/{id}:
+ *   delete:
+ *     summary: Delete a crash event
+ *     tags: [Crash Detection]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Crash event deleted successfully
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: Crash event not found
+ */
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: existing, error: fetchError } = await supabase
+      .from('crash_events')
+      .select('user_id')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existing) {
+      return res.status(404).json({ message: 'Crash event not found' });
+    }
+
     if (req.user.role === 'user' && existing.user_id !== req.user.id) {
       return res.status(403).json({ message: 'You do not have permission to delete this event' });
     }
@@ -619,5 +712,6 @@ router.delete('/:id', async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 });
+
 
 module.exports = router;

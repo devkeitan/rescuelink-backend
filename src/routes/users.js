@@ -42,44 +42,69 @@ router.use(authMiddleware);
  *         schema:
  *           type: string
  *         description: Search by name or email
+ *       - in: query
+ *         name: available_only
+ *         schema:
+ *           type: boolean
+ *         description: If true, exclude responders currently assigned to a responding alert or crash
  *     responses:
  *       200:
  *         description: List of users
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: object
  */
 router.get('/', isAdmin, async (req, res) => {
   try {
-    const { role, search } = req.query;
+    const { role, search, available_only } = req.query;
 
     let query = supabase
       .from('users')
       .select('id, first_name, middle_name, last_name, ext_name, username, email, user_phone_number, role, created_at, updated_at')
       .order('created_at', { ascending: false });
 
-    // Filter by role
     if (role) {
       query = query.eq('role', role);
     }
 
-    // Search by name or email
     if (search) {
       query = query.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`);
     }
 
     const { data, error } = await query;
-
     if (error) throw error;
+
+    // Filter out responders currently assigned to a responding alert or crash
+    if (available_only === 'true' && data.length > 0) {
+      // Get all responder IDs currently busy in alerts
+      const { data: busyAlerts } = await supabase
+        .from('alerts')
+        .select('assigned_responder_id')
+        .eq('status', 'responding')
+        .not('assigned_responder_id', 'is', null);
+
+      // Get all responder IDs currently busy in crash_events
+      const { data: busyCrashes } = await supabase
+        .from('crash_events')
+        .select('responder_id')
+        .eq('status', 'responding')
+        .not('responder_id', 'is', null);
+
+      // Combine into a Set for fast lookup
+      const busyResponderIds = new Set([
+        ...(busyAlerts  || []).map((a) => a.assigned_responder_id),
+        ...(busyCrashes || []).map((c) => c.responder_id),
+      ]);
+
+      // Return only users not in the busy set
+      const filtered = data.filter((u) => !busyResponderIds.has(u.id));
+      return res.json(filtered);
+    }
+
     res.json(data);
   } catch (error) {
     console.error('Get users error:', error);
     res.status(500).json({ message: error.message || 'Server error' });
   }
 });
+
 
 /**
  * @swagger
@@ -165,7 +190,7 @@ router.get('/:id', isAdmin, async (req, res) => {
  *                 example: "09123456789"
  *               role:
  *                 type: string
- *                 enum: [user, admin, rescuer, dispatcher, driver]
+ *                 enum: [user, admin, responder]
  *                 example: user
  *     responses:
  *       201:
@@ -191,7 +216,7 @@ router.post('/', isAdmin, async (req, res) => {
     }
 
     // Validate role
-    const validRoles = ['user', 'admin', 'rescuer', 'dispatcher', 'driver'];
+    const validRoles = ['user', 'admin', 'responder'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ message: 'Invalid role' });
     }
@@ -372,7 +397,7 @@ router.delete('/:id', isAdmin, async (req, res) => {
  *             properties:
  *               role:
  *                 type: string
- *                 enum: [user, admin, rescuer, dispatcher, driver]
+ *                 enum: [user, admin, responder]
  *     responses:
  *       200:
  *         description: Role updated successfully
@@ -382,7 +407,7 @@ router.patch('/:id/role', isAdmin, async (req, res) => {
     const { role } = req.body;
 
     // Validate role
-    const validRoles = ['user', 'admin', 'rescuer', 'dispatcher', 'driver'];
+    const validRoles = ['user', 'admin', 'responder'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ message: 'Invalid role' });
     }

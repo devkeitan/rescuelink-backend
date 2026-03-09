@@ -92,7 +92,7 @@ router.post('/upload-image', upload.single('image'), async (req, res) => {
  *     summary: Get alerts (role-based visibility)
  *     description: |
  *       - **Users** can only see alerts they created.
- *       - **Admin/Dispatcher/Rescuer** can see all alerts.
+ *       - **Admin/Responder** can see all alerts.
  *       - Supports filtering by status, type, or specific user.
  *     tags: [Alerts]
  *     security:
@@ -166,7 +166,7 @@ router.get('/', async (req, res) => {
  *     summary: Get alert by ID
  *     description: |
  *       Users may only access their own alert.
- *       Admin/Dispatcher/Rescuer may access any alert.
+ *       Admin/Responder may access any alert.
  *     tags: [Alerts]
  *     security:
  *       - bearerAuth: []
@@ -330,10 +330,10 @@ router.post('/', async (req, res) => {
  * @swagger
  * /api/v1/alerts/{id}:
  *   put:
- *     summary: Update alert fields (Admin/Dispatcher only)
+ *     summary: Update alert fields (Admin/Responder only)
  *     description: |
  *       Allows partial update of alert fields.
- *       Only roles **admin** and **dispatcher** may update alerts.
+ *       Only roles **admin** and **responder** may update alerts.
  *     tags: [Alerts]
  *     security:
  *       - bearerAuth: []
@@ -352,8 +352,8 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   try {
-    // Only admin/dispatcher can update
-    if (!['admin', 'dispatcher'].includes(req.user.role)) {
+    
+    if (!['admin', 'responder'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Access denied' });
     }
     
@@ -395,7 +395,7 @@ router.put('/:id', async (req, res) => {
  *   patch:
  *     summary: Update alert status
  *     description: |
- *       Allowed roles: **admin, dispatcher, rescuer**
+ *       Allowed roles: **admin, responder**
  *
  *       Automatically manages vehicle lifecycle:
  *       - responding → assigned vehicle status becomes `responding`
@@ -429,7 +429,7 @@ router.patch('/:id/status', async (req, res) => {
     }
 
     // Only admin/dispatcher can update status
-    if (!['admin', 'dispatcher', 'rescuer'].includes(req.user.role)) {
+    if (!['admin', 'responder'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -470,7 +470,7 @@ router.patch('/:id/status', async (req, res) => {
  * @swagger
  * /api/v1/alerts/{id}/assign:
  *   patch:
- *     summary: Assign vehicle and responder (Admin/Dispatcher only)
+ *     summary: Assign vehicle and responder (Admin/Responder only)
  *     description: |
  *       Assigns a vehicle and/or responder to the alert.
  *
@@ -498,9 +498,9 @@ router.patch('/:id/status', async (req, res) => {
 
 router.patch('/:id/assign', async (req, res) => {
   try {
-    const { vehicle_id, responder_id } = req.body;
+    const { vehicle_id, responder_id, status } = req.body;
 
-    if (!['admin', 'dispatcher'].includes(req.user.role)) {
+    if (!['admin', 'responder'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -512,11 +512,12 @@ router.patch('/:id/assign', async (req, res) => {
 
     if (currentAlertError) throw currentAlertError;
 
-    const updateData = {
-      assigned_vehicle_id: vehicle_id || null,
-      assigned_responder_id: responder_id || null,
-      updated_at: new Date().toISOString(),
-    };
+const updateData = {
+  assigned_vehicle_id: vehicle_id || null,
+  assigned_responder_id: responder_id || null,
+  status: status || 'pending',  // ← Add this
+  updated_at: new Date().toISOString(),
+};
 
     const { data: updatedAlert, error: updateError } = await supabase
       .from('alerts')
