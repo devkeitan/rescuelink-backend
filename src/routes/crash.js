@@ -1,7 +1,7 @@
 const express = require('express');
 const supabase = require('../config/supabase');
 const authMiddleware = require('../middleware/auth');
-const { getIO } = require('../socketInstance'); // ← add this import
+const { getIO } = require('../socketInstance');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -13,14 +13,12 @@ const CRASH_SELECT = `
   vehicle:vehicle_id(id, license_plate, vehicle_type, model, status)
 `;
 
-
 /**
  * @swagger
  * tags:
  *   name: Crash Detection
  *   description: Automatic crash detection from mobile sensors
  */
-
 
 /**
  * @swagger
@@ -59,6 +57,26 @@ const CRASH_SELECT = `
  *           type: string
  *           enum: [pending, responding, resolved, cancelled]
  *           default: pending
+ *         severity:
+ *           type: string
+ *           enum: [low, medium, high, critical]
+ *           nullable: true
+ *         timestamp:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *         source:
+ *           type: string
+ *           enum: [direct, mesh]
+ *           default: direct
+ *         packet_id:
+ *           type: string
+ *           nullable: true
+ *           description: Used to avoid duplicate mesh packets
+ *         device_id:
+ *           type: string
+ *           nullable: true
+ *           description: Identifies the phone that triggered the crash
  *         triggered_at:
  *           type: string
  *           format: date-time
@@ -153,6 +171,23 @@ const CRASH_SELECT = `
  *         status:
  *           type: string
  *           enum: [pending, responding, resolved, cancelled]
+ *         severity:
+ *           type: string
+ *           enum: [low, medium, high, critical]
+ *           nullable: true
+ *         timestamp:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *         source:
+ *           type: string
+ *           enum: [direct, mesh]
+ *         packet_id:
+ *           type: string
+ *           nullable: true
+ *         device_id:
+ *           type: string
+ *           nullable: true
  *         vehicle_id:
  *           type: integer
  *           nullable: true
@@ -178,7 +213,6 @@ const CRASH_SELECT = `
  *           type: string
  *           nullable: true
  */
-
 
 /**
  * @swagger
@@ -217,28 +251,79 @@ const CRASH_SELECT = `
  *               network_type:
  *                 type: string
  *                 example: "4g"
+ *               severity:
+ *                 type: string
+ *                 enum: [low, medium, high, critical]
+ *                 example: high
+ *               timestamp:
+ *                 type: string
+ *                 format: date-time
+ *                 example: "2026-03-15T21:00:00Z"
+ *               source:
+ *                 type: string
+ *                 enum: [direct, mesh]
+ *                 example: direct
+ *               packet_id:
+ *                 type: string
+ *                 example: "PKT-20260315-001"
+ *               device_id:
+ *                 type: string
+ *                 example: "DEVICE-ABC123"
  *     responses:
  *       201:
  *         description: Crash event created successfully
+ *       400:
+ *         description: Missing required fields or duplicate packet
+ *       500:
+ *         description: Server error
  */
 router.post('/', async (req, res) => {
   try {
-    const { latitude, longitude, impact_force, device_battery, network_type } = req.body;
+    const {
+      latitude,
+      longitude,
+      impact_force,
+      device_battery,
+      network_type,
+      severity,
+      timestamp,
+      source,
+      packet_id,
+      device_id,
+    } = req.body;
 
     if (!latitude || !longitude) {
       return res.status(400).json({ message: 'Latitude and longitude are required' });
     }
 
+    // Prevent duplicate mesh packets
+    if (packet_id) {
+      const { data: existing } = await supabase
+        .from('crash_events')
+        .select('id')
+        .eq('packet_id', packet_id)
+        .single();
+
+      if (existing) {
+        return res.status(400).json({ message: 'Duplicate packet — crash already recorded' });
+      }
+    }
+
     const crashEvent = {
-      user_id: req.user.id,
-      event_type: 'AUTO_CRASH',
+      user_id:        req.user.id,
+      event_type:     'AUTO_CRASH',
       latitude,
       longitude,
-      impact_force: impact_force || null,
+      impact_force:   impact_force   || null,
       device_battery: device_battery || null,
-      network_type: network_type || null,
-      status: 'pending',
-      triggered_at: new Date().toISOString()
+      network_type:   network_type   || null,
+      severity:       severity       || null,
+      timestamp:      timestamp      || new Date().toISOString(),
+      source:         source         || 'direct',
+      packet_id:      packet_id      || null,
+      device_id:      device_id      || null,
+      status:         'pending',
+      triggered_at:   new Date().toISOString(),
     };
 
     const { data, error } = await supabase
@@ -260,13 +345,11 @@ router.post('/', async (req, res) => {
   }
 });
 
-
 /**
  * @swagger
  * /api/v1/crash:
  *   get:
  *     summary: Get crash events
- *     description: Retrieve crash events with optional filters
  *     tags: [Crash Detection]
  *     security:
  *       - bearerAuth: []
@@ -276,6 +359,16 @@ router.post('/', async (req, res) => {
  *         schema:
  *           type: string
  *           enum: [pending, responding, resolved, cancelled]
+ *       - in: query
+ *         name: severity
+ *         schema:
+ *           type: string
+ *           enum: [low, medium, high, critical]
+ *       - in: query
+ *         name: source
+ *         schema:
+ *           type: string
+ *           enum: [direct, mesh]
  *       - in: query
  *         name: from
  *         schema:
@@ -302,7 +395,7 @@ router.post('/', async (req, res) => {
  */
 router.get('/', async (req, res) => {
   try {
-    const { status, from, to, limit = 20, offset = 0 } = req.query;
+    const { status, severity, source, from, to, limit = 20, offset = 0 } = req.query;
 
     let query = supabase
       .from('crash_events')
@@ -310,29 +403,30 @@ router.get('/', async (req, res) => {
       .eq('event_type', 'AUTO_CRASH')
       .order('triggered_at', { ascending: false });
 
-    if (status) query = query.eq('status', status);
-    if (from)   query = query.gte('triggered_at', from);
-    if (to)     query = query.lte('triggered_at', to);
+    if (status)   query = query.eq('status', status);
+    if (severity) query = query.eq('severity', severity);
+    if (source)   query = query.eq('source', source);
+    if (from)     query = query.gte('triggered_at', from);
+    if (to)       query = query.lte('triggered_at', to);
 
     if (req.user.role === 'user') {
       query = query.eq('user_id', req.user.id);
     }
 
-    const parsedLimit = parseInt(limit);
+    const parsedLimit  = parseInt(limit);
     const parsedOffset = parseInt(offset);
     query = query.range(parsedOffset, parsedOffset + parsedLimit - 1);
 
     const { data, error, count } = await query;
-
     if (error) throw error;
 
     res.json({
       data,
       pagination: {
-        total: count,
-        limit: parsedLimit,
-        offset: parsedOffset,
-        returned: data.length
+        total:    count,
+        limit:    parsedLimit,
+        offset:   parsedOffset,
+        returned: data.length,
       }
     });
 
@@ -341,7 +435,6 @@ router.get('/', async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 });
-
 
 /**
  * @swagger
@@ -385,7 +478,6 @@ router.patch('/:id/assign', async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    // Get current crash to track old vehicle
     const { data: currentCrash, error: fetchError } = await supabase
       .from('crash_events')
       .select('vehicle_id')
@@ -395,9 +487,9 @@ router.patch('/:id/assign', async (req, res) => {
     if (fetchError) throw fetchError;
 
     const updateData = {
-      vehicle_id: vehicle_id || null,
+      vehicle_id:   vehicle_id   || null,
       responder_id: responder_id || null,
-      updated_at: new Date().toISOString(),
+      updated_at:   new Date().toISOString(),
     };
 
     if (status) updateData.status = status;
@@ -411,7 +503,7 @@ router.patch('/:id/assign', async (req, res) => {
 
     if (updateError) throw updateError;
 
-    // Free old vehicle if it was replaced
+    // Free old vehicle if replaced
     if (currentCrash?.vehicle_id && currentCrash.vehicle_id !== vehicle_id) {
       await supabase
         .from('vehicles')
@@ -496,7 +588,7 @@ router.patch('/:id/status', async (req, res) => {
         .eq('id', data.vehicle_id);
     }
 
-    // Mark vehicle as responding when status is responding
+    // Mark vehicle as responding
     if (status === 'responding' && data.vehicle_id) {
       await supabase
         .from('vehicles')
@@ -585,7 +677,6 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-
 /**
  * @swagger
  * /api/v1/crash/{id}:
@@ -657,7 +748,6 @@ router.patch('/:id', async (req, res) => {
   }
 });
 
-
 /**
  * @swagger
  * /api/v1/crash/{id}:
@@ -712,6 +802,5 @@ router.delete('/:id', async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 });
-
 
 module.exports = router;
