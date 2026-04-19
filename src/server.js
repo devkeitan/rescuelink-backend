@@ -18,7 +18,7 @@ const responderRoutes = require ('./routes/responders')
 const geolocationRoutes = require('./routes/geolocation');
 const allAlertsRouter = require('./routes/allAlerts');
 const reportsRouter = require('./routes/reports');
-
+const systemLogsRouter = require('./routes/systemLogs');
 const { initSocket } = require('./socket');
 const { setIO } = require('./socketInstance');
 
@@ -121,7 +121,7 @@ app.use('/api/v1/vehicles', vehicleRoutes);
 app.use('/api/v1/responders', responderRoutes);
 app.use('/api/v1/allAlerts', allAlertsRouter);
 app.use('/api/v1/reports', reportsRouter);
-
+app.use('/api/v1/system-logs', systemLogsRouter);
 
 
 app.use('/api/v1/emergency-contacts', emergencyContactsRoutes);

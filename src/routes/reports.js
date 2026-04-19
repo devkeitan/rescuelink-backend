@@ -419,4 +419,79 @@ router.get('/summary', async (req, res) => {
   }
 });
 
+
+/**
+ * @swagger
+ * /api/v1/reports/stats:
+ *   get:
+ *     summary: Get basic statistics
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 total_alerts:
+ *                   type: integer
+ *                   example: 150
+ *                 total_crashes:
+ *                   type: integer
+ *                   example: 30
+ *       500:
+ *         description: Server error
+ */
+const getStats = async () => {
+  const today = new Date();
+  const startOfDay = new Date(today.setHours(0, 0, 0, 0)).toISOString();
+  const endOfDay = new Date(today.setHours(23, 59, 59, 999)).toISOString();
+
+  const [
+    { count: totalAlerts, error: e1 },
+    {count: totalCrashes, error: e2},
+    {count: activeAlerts, error: e3},
+    {count: activeCrashes, error: e4},
+    {count: todayAccidents, error: e5}
+
+  ] = await Promise.all([
+    supabase.from('alerts').select('*', { count: 'exact', head: true }),
+    supabase.from('crash_events').select('*', { count: 'exact', head: true }),
+    supabase.from('alerts').select('*', { count: 'exact', head: true }).in('status', ['pending', 'responding']),
+    supabase.from('crash_events').select('*', { count: 'exact', head: true }).in('status', ['pending', 'responding']),
+    supabase.from('crash_events').select('*', { count: 'exact', head: true }).gte('triggered_at', startOfDay).lte('triggered_at', endOfDay),
+  ]);
+
+
+if (e1) throw e1;
+if (e2) throw e2;
+if (e3) throw e3;
+if (e4) throw e4;
+if (e5) throw e5;
+
+  return {
+    total_alerts: totalAlerts,
+    total_crashes: totalCrashes,
+    active_alerts: activeAlerts,
+    active_crashes: activeCrashes,
+    total_active: activeAlerts + activeCrashes,
+    total_accidents: totalAlerts + totalCrashes,
+    today_accidents: todayAccidents
+  };
+};
+router.get('/stats', async (req, res) => {
+
+  try{
+    const stats = await getStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+
+
 module.exports = router;

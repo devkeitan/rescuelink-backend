@@ -6,6 +6,7 @@ const authMiddleware = require('../middleware/auth');
 const { getIO } = require('../socketInstance');
 const { uploadFile } = require('../services/uploadService'); // <-- import service
 const router = express.Router();
+const { logAction } = require('./systemLogs');
 
 // Protect all routes
 router.use(authMiddleware);
@@ -318,8 +319,16 @@ router.post('/', async (req, res) => {
     const io = getIO();
     io.emit("alert:new", data);
 
+    await logAction({
+  userId:     data.user_id,
+  recordId:   data.id,
+  action:     'created',
+  entityName: 'alert',
+  status:     data.status,
+  message:    `${req.user.name} created Alert #${data.id} (${data.alert_type} - ${data.severity})`,
+});
     res.status(201).json(data);
-
+       
   } catch (error) {
     console.error('Create alert error:', error);
     res.status(500).json({ message: error.message || 'Server error' });
@@ -458,7 +467,18 @@ router.patch('/:id/status', async (req, res) => {
     const io = getIO();
     io.emit("alert:status_updated", data);
 
+    if (status === 'resolved' || status === 'cancelled') {
+  await logAction({
+    userId:     req.user.id,
+    recordId:   data.id,
+    action:     status,
+    entityName: 'alert',
+    status:     data.status,
+    message:    `${req.user.name} ${status} Alert #${data.id}`,
+  });
+}
     res.json(data);
+
 
   } catch (error) {
     console.error('Update status error:', error);
@@ -556,7 +576,25 @@ const updateData = {
     const io = getIO();
     io.emit("alert:assigned", updatedAlert);
 
+
+    await logAction({
+  userId:     req.user.id,
+  recordId:   data.id,
+  action:     'assigned',
+  entityName: 'alert',
+  status:     data.status,
+  message:    `${req.user.name} assigned Alert #${data.id} to responder ID ${data.assigned_responder_id}`,
+});
+
     res.json(updatedAlert);
+  const { data: responder } = await supabase
+  .from('users')
+  .select('first_name, last_name')
+  .eq('id', responder_id)
+  .single();
+
+
+
   } catch (error) {
     console.error('Assign alert error:', error);
     res.status(500).json({ message: error.message || 'Server error' });
