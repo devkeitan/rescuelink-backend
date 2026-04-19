@@ -2,6 +2,7 @@ const express = require('express');
 const supabase = require('../config/supabase');
 const authMiddleware = require('../middleware/auth');
 const { getIO } = require('../socketInstance');
+const { logAction } = require('./systemLogs');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -337,6 +338,15 @@ router.post('/', async (req, res) => {
     const io = getIO();
     io.emit('crash:new', data);
 
+    await logAction({
+  userId:     data.user_id,
+  recordId:   data.id,
+  action:     'created',
+  entityName: 'crash_event',
+  status:     data.status,
+  message:    `Auto-crash detected for ${data.user?.name ?? 'User'} (Crash #${data.id})`.trim(),
+});
+
     res.status(201).json({ message: 'Crash event recorded', event: data });
 
   } catch (error) {
@@ -522,6 +532,21 @@ router.patch('/:id/assign', async (req, res) => {
     const io = getIO();
     io.emit('crash:assigned', updatedCrash);
 
+    const { data: crashResponder } = await supabase
+  .from('users')
+  .select('first_name, last_name')
+  .eq('id', responder_id)
+  .single();
+
+await logAction({
+  userId:     req.user.id,
+  recordId:   updatedCrash.id,
+  action:     'assigned',
+  entityName: 'crash_event',
+  status:     updatedCrash.status,
+  message:    `${req.user.name ?? 'Admin'} assigned Crash #${updatedCrash.id} to ${crashResponder?.name ?? 'Responder'} `.trim(),
+});
+
     res.json(updatedCrash);
   } catch (error) {
     console.error('Assign crash error:', error);
@@ -599,6 +624,17 @@ router.patch('/:id/status', async (req, res) => {
     const io = getIO();
     io.emit('crash:status_updated', data);
 
+
+    if (status === 'resolved' || status === 'cancelled') {
+  await logAction({
+    userId:     req.user.id,
+    recordId:   data.id,
+    action:     status,
+    entityName: 'crash_event',
+    status:     data.status,
+    message:    `${req.user.name ?? 'Admin'} ${status} Crash #${data.id}`.trim(),
+  });
+}
     res.json(data);
   } catch (error) {
     console.error('Update crash status error:', error);
