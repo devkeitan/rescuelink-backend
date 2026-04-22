@@ -317,7 +317,7 @@ router.post('/', async (req, res) => {
     if (error) throw error;
 
     const io = getIO();
-    io.emit("alert:new", data);
+    io.to('admin').to('dispatcher').emit("alert:new", data);
 
     await logAction({
   userId:     data.user_id,
@@ -389,13 +389,13 @@ router.put('/:id', async (req, res) => {
     }
 
     const io = getIO();
-    io.emit("alert:updated", data);
+    io.to('admin').to('responder').emit("alert:updated", data);
 
     res.json(data);
   } catch (error) {
     console.error('Update alert error:', error);
     res.status(500).json({ message: error.message || 'Server error' });
-  }
+  }``
 });
 
 /**
@@ -574,7 +574,7 @@ const updateData = {
     }
 
     const io = getIO();
-    io.emit("alert:assigned", updatedAlert);
+    io.to('admin').to('responder').emit("alert:updated", updatedAlert);
 
 
     await logAction({
