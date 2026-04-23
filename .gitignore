@@ -2,6 +2,5 @@ node_modules/
 .env
 .env.local
 .env.production
-.env.test
 *.log
 .DS_Store
