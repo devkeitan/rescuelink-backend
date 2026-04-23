@@ -3,6 +3,8 @@ name: Backend CI
 on:
   push:
     branches: [develop]
+  pull_request:
+    branches: [main]
 
 jobs:
   check:
@@ -15,4 +17,6 @@ jobs:
         with:
           node-version: 18
 
-      - run: npm install
+      - run: npm ci
+
+      - run: npm test
