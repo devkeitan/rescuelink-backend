@@ -47,7 +47,11 @@ if (process.env.NODE_ENV === 'test') {
 
   module.exports = supabaseClient;
 }
-
+ else {
+  // In non‑test environments (dev/prod), check env vars and use real Supabase
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error('Missing Supabase environment variables');
+  }
 // If we are not in test mode, use real Supabase
 if (!supabaseUrl || !supabaseKey) {
   throw new Error('Missing Supabase environment variables');
@@ -55,3 +59,4 @@ if (!supabaseUrl || !supabaseKey) {
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 module.exports = supabase;
+ }
