@@ -336,7 +336,7 @@ router.post('/', async (req, res) => {
     if (error) throw error;
 
     const io = getIO();
-    io.emit('crash:new', data);
+    io.to('admin').to('responder').emit("crash:new", data);
 
     await logAction({
   userId:     data.user_id,
@@ -530,7 +530,11 @@ router.patch('/:id/assign', async (req, res) => {
     }
 
     const io = getIO();
-    io.emit('crash:assigned', updatedCrash);
+    io.to('admin').to('responder').emit('crash:assigned', updatedCrash);
+// Also notify the assigned responder directly
+if (responder_id) {
+  io.to(`user_${responder_id}`).emit('crash:assigned', updatedCrash);
+}
 
     const { data: crashResponder } = await supabase
   .from('users')
@@ -622,7 +626,7 @@ router.patch('/:id/status', async (req, res) => {
     }
 
     const io = getIO();
-    io.emit('crash:status_updated', data);
+    io.to('admin').to('responder').emit("crash:updated", data);
 
 
     if (status === 'resolved' || status === 'cancelled') {
