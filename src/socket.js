@@ -3,23 +3,22 @@ const initSocket = (io) => {
     console.log('User connected:', socket.id);
 
      socket.on('join_room', ({ role, userId }) => {
-      // Leave any previous rooms first (handles page refresh / reconnects)
+      
       socket.rooms.forEach((room) => {
         if (room !== socket.id) socket.leave(room);
       });
 
-      // Join role room — e.g. 'admin', 'dispatcher', 'responder', 'user'
+      
       socket.join(role);
 
-      // Join personal room — e.g. 'user_5'
-      // Used for direct notifications like "you were assigned to crash #42"
+     
       socket.join(`user_${userId}`);
 
       console.log(`[Socket] ${socket.id} joined rooms: [${role}, user_${userId}]`);
     });
 
 
-    // ✅ Client calls this on logout
+    
     socket.on('leave_room', () => {
       socket.rooms.forEach((room) => {
         if (room !== socket.id) socket.leave(room);
