@@ -2,9 +2,60 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const supabase = require('../config/supabase');
-
+const crypto = require('crypto'); 
 
 const router = express.Router();
+
+async function getUserByEmail(email) {
+  const {data, error} = await supabase
+    .from('users')
+    .select('id, email')
+    .eq('email', email)
+    .single();
+
+    if (error) throw error;
+    return data;
+}
+
+async function createPasswordReset(user_id){
+  const token = crypto.randomBytes(32).toString('hex');
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 60 * 60 * 1000);
+  const {data, error} = await supabase
+    .from('password_resets')
+    .insert({
+        user_id: user_id,
+        token: token,
+        expires_at: expiresAt.toISOString(),
+      });
+
+      if (error) throw error;
+      return token;
+
+}
+
+async function getValidResetToken(token) {
+  const now = new Date().toISOString();
+  const {data, error} = await supabase
+    .from('password_resets')
+    .select('id, user_id, expires_at')
+    .eq('token', token)
+    .gte('expires_at', now)
+    .single();
+    
+    if (error || !data) return null;
+    return data;
+}
+
+async function deletePasswordReset(resetId) {
+  const {error} = await supabase
+    .from('password_resets')
+    .delete()
+    .eq('id', resetId);
+    
+    if (error) throw error;
+}
+
 
 
 /**
@@ -66,6 +117,9 @@ const router = express.Router();
  *                 type: string
  *                 format: date
  *                 example: "1990-01-15"
+ *               medical_history:
+ *                type: string
+ *                example: "No known allergies. Previous surgery in 2015."
  *               role:
  *                 type: string
  *                 enum: [user, admin, rescuer, dispatcher]
@@ -88,6 +142,8 @@ const router = express.Router();
  *                   type: string
  *                 role:
  *                   type: string
+ *                 medical_history:
+ *                   type: string
  *       400:
  *         description: Bad request
  */
@@ -104,6 +160,7 @@ router.post('/register', async (req, res) => {
       user_phone_number,
       relative_number,
       birth_date,
+      medical_history,
       role = 'user'
     } = req.body;
 
@@ -129,6 +186,7 @@ router.post('/register', async (req, res) => {
         user_phone_number,
         relative_number,
         birth_date,
+        medical_history,
         role,
       }])
       .select()
@@ -341,6 +399,104 @@ router.get('/me', async (req, res) => {
 router.post('/logout', (req, res) => {
   res.json({ message: 'Logged out successfully' });
 });
+
+
+
+
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+        return res.status(400).json({ message: 'Email is required' });
+    }
+
+    let user;
+    try {
+        user = await getUserByEmail(email);
+    } catch (error) {
+        return res.status(200).json({ message: 'If an account with that email exists, a password reset link has been sent' });
+    }
+    
+    const {error: cleanupError} = await supabase
+        .from('password_resets')
+        .delete()
+        .eq('user_id', user.id);
+
+        if (cleanupError) throw cleanupError;
+
+        const token = await createPasswordReset(user.id);
+
+        const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+
+        const transporter =  require('nodemailer').createTransport({
+            host: process.env.SMTP_HOST,
+            port: 587,
+            auth: {
+                user: process.env.SMTP_USER,
+                pass: process.env.SMTP_PASS
+            },
+        });
+            await transporter.sendMail({
+                from: process.env.SMTP_FROM,
+                to: user.email,
+                subject: 'RescueLink Password Reset',
+               html: `
+        <h2>Reset your password</h2>
+        <p>Click the link below to reset your password. This link expires in 1 hour.</p>
+        <a href="${resetUrl}">Reset Password</a>
+        <p>If you didn’t request this, ignore this email. Your password will not change.</p>
+      `,
+    });
+
+    res.json({ message: 'If account exists, instructions have been sent' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || !password) {
+      return res.status(400).json({ message: 'Token and password are required' });
+    }
+
+    // 1. Check if token is valid and not expired
+    const reset = await getValidResetToken(token);
+
+    if (!reset) {
+      return res.status(400).json({ message: 'Invalid or expired reset token' });
+    }
+
+    // 2. HASH the new password
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    // 3. UPDATE the user's password
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ password: hashedPassword })
+      .eq('id', reset.user_id);
+
+    if (updateError) {
+      return res.status(500).json({ message: 'Failed to update password' });
+    }
+
+    // 4. DELETE the reset record
+    await deletePasswordReset(reset.id);
+
+    res.json({ message: 'Password has been reset successfully' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
 
 
 module.exports = router;

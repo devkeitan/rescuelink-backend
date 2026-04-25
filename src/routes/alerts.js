@@ -317,7 +317,7 @@ router.post('/', async (req, res) => {
     if (error) throw error;
 
     const io = getIO();
-    io.to('admin').to('dispatcher').emit("alert:new", data);
+    io.emit("alert:new", data); 
 
     await logAction({
   userId:     data.user_id,
