@@ -389,9 +389,7 @@ router.get('/me', async (req, res) => {
  * /api/v1/auth/me:
  *   patch:
  *     summary: Update authenticated user's profile
- *     description: Updates the profile information of the currently authenticated user using a valid JWT token.
- *     tags:
- *       - Authentication
+ *     tags: [Authentication]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -407,12 +405,12 @@ router.get('/me', async (req, res) => {
  *               first_name:
  *                 type: string
  *                 example: John
- *              middle_name:
- *                type: string
- *                example: Smith
- *              ext_name:
- *               type: string
- *               example: Jr.
+ *               middle_name:
+ *                 type: string
+ *                 example: Smith
+ *               ext_name:
+ *                 type: string
+ *                 example: Jr.
  *               last_name:
  *                 type: string
  *                 example: Doe
@@ -470,6 +468,7 @@ router.get('/me', async (req, res) => {
  *                   value:
  *                     message: Invalid token
  */
+
 router.patch('/me', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
