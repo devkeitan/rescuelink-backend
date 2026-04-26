@@ -233,7 +233,7 @@ router.post('/register', async (req, res) => {
  *               password:
  *                 type: string
  *                 format: password
- *                 example: admin123
+ *                 example: password
  *     responses:
  *       200:
  *         description: Login successful
@@ -379,6 +379,139 @@ router.get('/me', async (req, res) => {
     res.json(user);
   } catch (error) {
     console.error('Get user error:', error);
+    res.status(401).json({ message: 'Invalid token' });
+  }
+});
+
+
+/**
+ * @swagger
+ * /api/v1/auth/me:
+ *   patch:
+ *     summary: Update authenticated user's profile
+ *     description: Updates the profile information of the currently authenticated user using a valid JWT token.
+ *     tags:
+ *       - Authentication
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 example: johndoe
+ *               first_name:
+ *                 type: string
+ *                 example: John
+ *              middle_name:
+ *                type: string
+ *                example: Smith
+ *              ext_name:
+ *               type: string
+ *               example: Jr.
+ *               last_name:
+ *                 type: string
+ *                 example: Doe
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: johndoe@email.com
+ *               user_phone_number:
+ *                 type: string
+ *                 example: "09123456789"
+ *               relative_number:
+ *                 type: string
+ *                 example: "09987654321"
+ *               birth_date:
+ *                 type: string
+ *                 format: date
+ *                 example: 2000-01-15
+ *               medical_history:
+ *                 type: string
+ *                 example: Asthma, Hypertension
+ *     responses:
+ *       200:
+ *         description: Profile updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               example:
+ *                 id: 1
+ *                 username: johndoe
+ *                 first_name: John
+ *                 last_name: Doe
+ *                 email: johndoe@email.com
+ *                 user_phone_number: "09123456789"
+ *                 relative_number: "09987654321"
+ *                 birth_date: 2000-01-15
+ *                 medical_history: Asthma, Hypertension
+ *       400:
+ *         description: Failed to update profile
+ *         content:
+ *           application/json:
+ *             schema:
+ *               example:
+ *                 message: Failed to update profile
+ *       401:
+ *         description: Unauthorized or invalid token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               examples:
+ *                 noToken:
+ *                   value:
+ *                     message: No token provided
+ *                 invalidToken:
+ *                   value:
+ *                     message: Invalid token
+ */
+router.patch('/me', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      return res.status(401).json({ message: 'No token provided' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    const profileUpdates = {
+      username: req.body.username,
+      first_name: req.body.first_name,
+      middle_name: req.body.middle_name,
+      ext_name: req.body.ext_name,
+      last_name: req.body.last_name,
+      email: req.body.email,
+      user_phone_number: req.body.user_phone_number,
+      relative_number: req.body.relative_number,
+      birth_date: req.body.birth_date,
+      medical_history: req.body.medical_history,
+    };
+
+    Object.keys(profileUpdates).forEach(
+      (key) => profileUpdates[key] == null && delete profileUpdates[key]
+    );
+
+    const { data: profile, error } = await supabase
+      .from('users')
+      .update(profileUpdates)
+      .eq('id', decoded.id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Update profile error:', error);
+      return res.status(400).json({ message: 'Failed to update profile' });
+    }
+
+    res.json(profile);
+  } catch (error) {
+    console.error('Update profile error:', error);
     res.status(401).json({ message: 'Invalid token' });
   }
 });
