@@ -19,6 +19,7 @@ const geolocationRoutes = require('./routes/geolocation');
 const allAlertsRouter = require('./routes/allAlerts');
 const reportsRouter = require('./routes/reports');
 const systemLogsRouter = require('./routes/systemLogs');
+const bleRoutes = require('./routes/ble')
 const { initSocket } = require('./socket');
 const { setIO } = require('./socketInstance');
 
@@ -115,6 +116,8 @@ app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/alerts', alertRoutes);
 app.use('/api/v1/sos', sosRoutes);
 app.use('/api/v1/crash', crashRoutes);
+
+app.use('/api/v1/emergency', bleRoutes);
 
 // ADMIN ROUTES
 app.use('/api/v1/vehicles', vehicleRoutes);
