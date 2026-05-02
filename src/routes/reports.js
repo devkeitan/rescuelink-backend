@@ -381,27 +381,32 @@ router.get('/summary', async (req, res) => {
       return query;
     };
 
-    const alertsCount = await buildCountQuery('alerts', 'reported_at');
-    const crashesCount = await buildCountQuery('crash_events', 'triggered_at');
-
-    // Status breakdown
+    // Status breakdown - DECLARED HERE FIRST (client-side grouping fix)
     const getStatusBreakdown = async (table, timestampField) => {
       let query = supabase
         .from(table)
-        .select('status, count');
+        .select('status');  // Just status for efficiency
 
       if (from) query = query.gte(timestampField, from);
       if (to) query = query.lte(timestampField, to);
       if (req.user.role === 'user') query = query.eq('user_id', req.user.id);
 
-      // Group by status
-      query = query.group('status');
-
       const { data, error } = await query;
       if (error) throw error;
-      return data;
+
+      // Group and count in Node.js
+      const statusCounts = {};
+      data.forEach(row => {
+        const status = row.status || 'unknown';
+        statusCounts[status] = (statusCounts[status] || 0) + 1;
+      });
+
+      return Object.entries(statusCounts).map(([status, count]) => ({ status, count }));
     };
 
+    // Now call them
+    const alertsCount = await buildCountQuery('alerts', 'reported_at');
+    const crashesCount = await buildCountQuery('crash_events', 'triggered_at');
     const alertStatuses = await getStatusBreakdown('alerts', 'reported_at');
     const crashStatuses = await getStatusBreakdown('crash_events', 'triggered_at');
 
@@ -418,7 +423,6 @@ router.get('/summary', async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 });
-
 
 /**
  * @swagger
@@ -487,6 +491,119 @@ router.get('/stats', async (req, res) => {
     const stats = await getStats();
     res.json(stats);
   } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+/**
+ * @swagger
+ * /api/v1/reports/monthly:
+ *   get:
+ *     summary: Monthly incident summary for charts
+ *     description: Counts of alerts/crashes grouped by month (YYYY-MM format). Defaults to last 12 months.
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: months
+ *         schema:
+ *           type: integer
+ *           default: 12
+ *           minimum: 1
+ *           maximum: 24
+ *         description: Number of past months to summarize
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *     responses:
+ *       200:
+ *         description: Monthly data for bar charts
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 months:
+ *                   type: array
+ *                   items:
+ *                     type: string
+ *                     example: "2026-04"
+ *                 alerts:
+ *                   type: array
+ *                   items:
+ *                     type: integer
+ *                 crashes:
+ *                   type: array
+ *                   items:
+ *                     type: integer
+ *                 totals:
+ *                   type: array
+ *                   items:
+ *                     type: integer
+ */
+router.get('/monthly', async (req, res) => {
+  try {
+    const monthsBack = parseInt(req.query.months) || 12;
+    const from = req.query.from;
+
+    // Generate month labels (e.g., last 12: "2026-05", "2026-04", ..., "2025-06")
+    const endDate = from ? new Date(from) : new Date();
+    const startDate = new Date(endDate);
+    startDate.setMonth(endDate.getMonth() - monthsBack + 1);
+    startDate.setDate(1);
+
+    const monthCounts = {};
+    const months = [];
+    let current = new Date(startDate);
+
+    while (current <= endDate) {
+      const monthKey = current.toISOString().slice(0, 7); // "2026-04"
+      months.unshift(monthKey); // Reverse chronological
+      monthCounts[monthKey] = { alerts: 0, crashes: 0 };
+      current.setMonth(current.getMonth() + 1);
+    }
+
+    // Fetch alerts timestamps
+    let query = supabase.from('alerts').select('reported_at');
+    if (req.user.role === 'user') query = query.eq('user_id', req.user.id);
+    if (from) query = query.gte('reported_at', from);
+    const { data: alertData } = await query;
+
+    // Count alerts by month
+    alertData?.forEach(row => {
+      const monthKey = new Date(row.reported_at).toISOString().slice(0, 7);
+      if (monthCounts[monthKey]) monthCounts[monthKey].alerts++;
+    });
+
+    // Fetch crashes timestamps
+    query = supabase.from('crash_events').select('triggered_at').eq('event_type', 'AUTO_CRASH');
+    if (req.user.role === 'user') query = query.eq('user_id', req.user.id);
+    if (from) query = query.gte('triggered_at', from);
+    const { data: crashData } = await query;
+
+    // Count crashes by month
+    crashData?.forEach(row => {
+      const monthKey = new Date(row.triggered_at).toISOString().slice(0, 7);
+      if (monthCounts[monthKey]) monthCounts[monthKey].crashes++;
+    });
+
+    // Build arrays for bar chart
+    const alerts = months.map(m => monthCounts[m].alerts);
+    const crashes = months.map(m => monthCounts[m].crashes);
+    const totals = months.map(m => monthCounts[m].alerts + monthCounts[m].crashes);
+
+    res.json({
+      months,
+      alerts,
+      crashes,
+      totals
+    });
+  } catch (error) {
+    console.error('Monthly summary error:', error);
     res.status(500).json({ message: error.message });
   }
 });
