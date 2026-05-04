@@ -113,7 +113,7 @@ router.post('/upload-image', upload.single('image'), async (req, res) => {
  *         name: user_id
  *         schema:
  *           type: integer
- *         description: Admin/Dispatcher only filter
+ *         description: Admin/Responder only filter
  *     responses:
  *       200:
  *         description: Alerts retrieved successfully
@@ -146,7 +146,7 @@ router.get('/', async (req, res) => {
     if (req.user.role === 'user') {
       query = query.eq('user_id', req.user.id);
     } else if (user_id) {
-      // Admin/dispatcher can filter by user
+      // Admin/responder can filter by user
       query = query.eq('user_id', user_id);
     }
 
@@ -395,7 +395,7 @@ router.put('/:id', async (req, res) => {
   } catch (error) {
     console.error('Update alert error:', error);
     res.status(500).json({ message: error.message || 'Server error' });
-  }``
+  }
 });
 
 /**
@@ -437,7 +437,7 @@ router.patch('/:id/status', async (req, res) => {
       return res.status(400).json({ message: 'Invalid status' });
     }
 
-    // Only admin/dispatcher can update status
+    // Only admin/responder can update status
     if (!['admin', 'responder'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -526,18 +526,18 @@ router.patch('/:id/assign', async (req, res) => {
 
     const { data: currentAlert, error: currentAlertError } = await supabase
       .from('alerts')
-      .select('assigned_vehicle_id')
+      .select('assigned_vehicle_id, status')
       .eq('id', req.params.id)
       .single();
 
     if (currentAlertError) throw currentAlertError;
 
-const updateData = {
-  assigned_vehicle_id: vehicle_id || null,
-  assigned_responder_id: responder_id || null,
-  status: status || 'pending',  // ← Add this
-  updated_at: new Date().toISOString(),
-};
+    const updateData = {
+      assigned_vehicle_id: vehicle_id || null,
+      assigned_responder_id: responder_id || null,
+      status: status ?? currentAlert.status,
+      updated_at: new Date().toISOString(),
+    };
 
     const { data: updatedAlert, error: updateError } = await supabase
       .from('alerts')
@@ -552,7 +552,7 @@ const updateData = {
 
     if (updateError) throw updateError;
 
-    // Update old vehicle back to available (if it was replaced)
+    // Reset old vehicle
     if (
       currentAlert?.assigned_vehicle_id &&
       currentAlert.assigned_vehicle_id !== vehicle_id
@@ -563,37 +563,35 @@ const updateData = {
         .eq('id', currentAlert.assigned_vehicle_id);
     }
 
-    // Update new vehicle to assigned
+    // Assign new vehicle
     if (vehicle_id) {
-      const { error: vehicleError } = await supabase
+      await supabase
         .from('vehicles')
         .update({ status: 'assigned' })
         .eq('id', vehicle_id);
-
-      if (vehicleError) console.error('Vehicle status update failed:', vehicleError);
     }
 
     const io = getIO();
     io.to('admin').to('responder').emit("alert:updated", updatedAlert);
 
-
     await logAction({
-  userId:     req.user.id,
-  recordId:   data.id,
-  action:     'assigned',
-  entityName: 'alert',
-  status:     data.status,
-  message:    `${req.user.name} assigned Alert #${data.id} to responder ID ${data.assigned_responder_id}`,
+      userId: req.user.id,
+      recordId: updatedAlert.id,
+      action: 'assigned',
+      entityName: 'alert',
+      status: updatedAlert.status,
+      message: `${req.user.name} assigned Alert #${updatedAlert.id} to responder ID ${updatedAlert.assigned_responder_id}`,
+    });
+
+    res.json({
+  id: updatedAlert.id,
+  type: 'alert',
+  status: updatedAlert.status,
+  timestamp: updatedAlert.reported_at,
+  latitude: updatedAlert.latitude,
+  longitude: updatedAlert.longitude,
+  data: updatedAlert
 });
-
-    res.json(updatedAlert);
-  const { data: responder } = await supabase
-  .from('users')
-  .select('first_name, last_name')
-  .eq('id', responder_id)
-  .single();
-
-
 
   } catch (error) {
     console.error('Assign alert error:', error);

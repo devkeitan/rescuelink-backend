@@ -34,7 +34,7 @@ const CRASH_SELECT = `
  *           type: integer
  *         event_type:
  *           type: string
- *           example: AUTO_CRASH
+ *           example: auto_crash
  *         latitude:
  *           type: number
  *           format: float
@@ -66,10 +66,6 @@ const CRASH_SELECT = `
  *           type: string
  *           format: date-time
  *           nullable: true
- *         source:
- *           type: string
- *           enum: [direct, mesh]
- *           default: direct
  *         packet_id:
  *           type: string
  *           nullable: true
@@ -180,9 +176,6 @@ const CRASH_SELECT = `
  *           type: string
  *           format: date-time
  *           nullable: true
- *         source:
- *           type: string
- *           enum: [direct, mesh]
  *         packet_id:
  *           type: string
  *           nullable: true
@@ -260,10 +253,6 @@ const CRASH_SELECT = `
  *                 type: string
  *                 format: date-time
  *                 example: "2026-03-15T21:00:00Z"
- *               source:
- *                 type: string
- *                 enum: [direct, mesh]
- *                 example: direct
  *               packet_id:
  *                 type: string
  *                 example: "PKT-20260315-001"
@@ -288,7 +277,6 @@ router.post('/', async (req, res) => {
       network_type,
       severity,
       timestamp,
-      source,
       packet_id,
       device_id,
     } = req.body;
@@ -312,7 +300,7 @@ router.post('/', async (req, res) => {
 
     const crashEvent = {
       user_id:        req.user.id,
-      event_type:     'AUTO_CRASH',
+      event_type:     'auto_crash',
       latitude,
       longitude,
       impact_force:   impact_force   || null,
@@ -320,7 +308,6 @@ router.post('/', async (req, res) => {
       network_type:   network_type   || null,
       severity:       severity       || null,
       timestamp:      timestamp      || new Date().toISOString(),
-      source:         source         || 'direct',
       packet_id:      packet_id      || null,
       device_id:      device_id      || null,
       status:         'pending',
@@ -374,11 +361,7 @@ router.post('/', async (req, res) => {
  *         schema:
  *           type: string
  *           enum: [low, medium, high, critical]
- *       - in: query
- *         name: source
- *         schema:
- *           type: string
- *           enum: [direct, mesh]
+
  *       - in: query
  *         name: from
  *         schema:
@@ -410,7 +393,7 @@ router.get('/', async (req, res) => {
     let query = supabase
       .from('crash_events')
       .select(CRASH_SELECT, { count: 'exact' })
-      .eq('event_type', 'AUTO_CRASH')
+      .eq('event_type', 'auto_crash')
       .order('triggered_at', { ascending: false });
 
     if (status)   query = query.eq('status', status);
@@ -450,7 +433,7 @@ router.get('/', async (req, res) => {
  * @swagger
  * /api/v1/crash/{id}/assign:
  *   patch:
- *     summary: Assign vehicle and responder to a crash (Admin/Dispatcher only)
+ *     summary: Assign vehicle and responder to a crash (Admin only)
  *     tags: [Crash Detection]
  *     security:
  *       - bearerAuth: []
@@ -484,7 +467,7 @@ router.patch('/:id/assign', async (req, res) => {
   try {
     const { vehicle_id, responder_id, status } = req.body;
 
-    if (!['admin', 'dispatcher'].includes(req.user.role)) {
+    if (!['admin', 'responder'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -531,7 +514,7 @@ router.patch('/:id/assign', async (req, res) => {
 
     const io = getIO();
     io.to('admin').to('responder').emit('crash:assigned', updatedCrash);
-// Also notify the assigned responder directly
+// Also notify the assigned responder if applicable
 if (responder_id) {
   io.to(`user_${responder_id}`).emit('crash:assigned', updatedCrash);
 }
@@ -551,7 +534,15 @@ await logAction({
   message:    `${req.user.name ?? 'Admin'} assigned Crash #${updatedCrash.id} to ${crashResponder?.name ?? 'Responder'} `.trim(),
 });
 
-    res.json(updatedCrash);
+    res.json({
+  id: updatedCrash.id,
+  type: 'crash',
+  status: updatedCrash.status,
+  timestamp: updatedCrash.triggered_at,
+  latitude: updatedCrash.latitude,
+  longitude: updatedCrash.longitude,
+  data: updatedCrash
+});
   } catch (error) {
     console.error('Assign crash error:', error);
     res.status(500).json({ message: error.message });
@@ -596,7 +587,7 @@ router.patch('/:id/status', async (req, res) => {
       return res.status(400).json({ message: 'Invalid status' });
     }
 
-    if (!['admin', 'dispatcher', 'responder'].includes(req.user.role)) {
+    if (!['admin', 'responder'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -642,6 +633,49 @@ router.patch('/:id/status', async (req, res) => {
     res.json(data);
   } catch (error) {
     console.error('Update crash status error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.patch('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+
+    const { data: existing, error: fetchError } = await supabase
+      .from('crash_events')
+      .select('user_id')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existing) {
+      return res.status(404).json({ message: 'Crash event not found' });
+    }
+
+    if (req.user.role === 'user' && existing.user_id !== req.user.id) {
+      return res.status(403).json({ message: 'You do not have permission to update this event' });
+    }
+
+    delete updates.id;
+    delete updates.user_id;
+    delete updates.event_type;
+    delete updates.created_at;
+    delete updates.updated_at;
+    delete updates.triggered_at;
+
+    const { data, error } = await supabase
+      .from('crash_events')
+      .update(updates)
+      .eq('id', id)
+      .select(CRASH_SELECT)
+      .single();
+
+    if (error) throw error;
+
+    res.json({ message: 'Crash event updated', event: data });
+
+  } catch (error) {
+    console.error('Patch crash event error:', error);
     res.status(500).json({ message: error.message });
   }
 });
@@ -745,48 +779,7 @@ router.put('/:id', async (req, res) => {
  *       404:
  *         description: Crash event not found
  */
-router.patch('/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const updates = req.body;
 
-    const { data: existing, error: fetchError } = await supabase
-      .from('crash_events')
-      .select('user_id')
-      .eq('id', id)
-      .single();
-
-    if (fetchError || !existing) {
-      return res.status(404).json({ message: 'Crash event not found' });
-    }
-
-    if (req.user.role === 'user' && existing.user_id !== req.user.id) {
-      return res.status(403).json({ message: 'You do not have permission to update this event' });
-    }
-
-    delete updates.id;
-    delete updates.user_id;
-    delete updates.event_type;
-    delete updates.created_at;
-    delete updates.updated_at;
-    delete updates.triggered_at;
-
-    const { data, error } = await supabase
-      .from('crash_events')
-      .update(updates)
-      .eq('id', id)
-      .select(CRASH_SELECT)
-      .single();
-
-    if (error) throw error;
-
-    res.json({ message: 'Crash event updated', event: data });
-
-  } catch (error) {
-    console.error('Patch crash event error:', error);
-    res.status(500).json({ message: error.message });
-  }
-});
 
 /**
  * @swagger
