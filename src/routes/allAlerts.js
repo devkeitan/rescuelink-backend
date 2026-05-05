@@ -127,7 +127,7 @@ router.get('/', async (req, res) => {
           responder:responder_id(id, first_name, last_name, user_phone_number),
           vehicle:vehicle_id(id, license_plate, vehicle_type, model, status)
         `, { count: 'exact' })
-        .eq('event_type', 'AUTO_CRASH')
+        .eq('event_type', 'auto_crash')
         .order('triggered_at', { ascending: false });
 
       if (status) query = query.eq('status', status);
@@ -144,7 +144,7 @@ router.get('/', async (req, res) => {
       const { data, error } = await buildAlertQuery();
       if (error) throw error;
       alerts = (data || []).map(item => ({
-        source: 'alert',
+        type: 'alert',
         id: item.id,
         userId: item.user_id,
         status: item.status,
@@ -161,7 +161,7 @@ router.get('/', async (req, res) => {
       const { data, error } = await buildCrashQuery();
       if (error) throw error;
       crashes = (data || []).map(item => ({
-        source: 'crash',
+        type: 'crash',
         id: item.id,
         userId: item.user_id,
         status: item.status,
