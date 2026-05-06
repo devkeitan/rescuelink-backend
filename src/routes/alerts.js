@@ -390,6 +390,7 @@ router.put('/:id', async (req, res) => {
 
     const io = getIO();
     io.to('admin').to('responder').emit("alert:updated", data);
+    io.to(`user_${data.user_id}`).emit("alert:updated", data);
 
     res.json(data);
   } catch (error) {
@@ -465,7 +466,8 @@ router.patch('/:id/status', async (req, res) => {
     }
 
     const io = getIO();
-    io.emit("alert:status_updated", data);
+   io.to('admin').to('responder').emit("alert:status_updated", data);
+io.to(`user_${data.user_id}`).emit("alert:status_updated", data);
 
     if (status === 'resolved' || status === 'cancelled') {
   await logAction({
@@ -546,7 +548,8 @@ router.patch('/:id/assign', async (req, res) => {
       .select(`
         *,
         vehicle:assigned_vehicle_id(id, license_plate, vehicle_type, status),
-        responder:assigned_responder_id(id, first_name, last_name)
+        responder:assigned_responder_id(id, first_name, last_name),
+        user:user_id(id, first_name, last_name, user_phone_number, email)
       `)
       .single();
 
@@ -573,7 +576,7 @@ router.patch('/:id/assign', async (req, res) => {
 
     const io = getIO();
     io.to('admin').to('responder').emit("alert:updated", updatedAlert);
-
+    io.to(`user_${updatedAlert.user_id}`).emit("alert:assigned", updatedAlert);
     await logAction({
       userId: req.user.id,
       recordId: updatedAlert.id,
