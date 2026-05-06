@@ -306,7 +306,7 @@ router.post('/', async (req, res) => {
       impact_force:   impact_force   || null,
       device_battery: device_battery || null,
       network_type:   network_type   || null,
-      severity:       severity       || null,
+      severity: severity ? severity.toLowerCase() : null,
       timestamp:      timestamp      || new Date().toISOString(),
       packet_id:      packet_id      || null,
       device_id:      device_id      || null,
@@ -324,6 +324,7 @@ router.post('/', async (req, res) => {
 
     const io = getIO();
     io.to('admin').to('responder').emit("crash:new", data);
+    io.to(`user_${data.user_id}`).emit("crash:new", data);
 
     await logAction({
   userId:     data.user_id,
@@ -331,7 +332,7 @@ router.post('/', async (req, res) => {
   action:     'created',
   entityName: 'crash_event',
   status:     data.status,
-  message:    `Auto-crash detected for ${data.user?.name ?? 'User'} (Crash #${data.id})`.trim(),
+  message:    `Auto-crash detected for ${data.user?.first_name ?? ''} ${data.user?.last_name ?? ''}`.trim(),
 });
 
     res.status(201).json({ message: 'Crash event recorded', event: data });
@@ -514,10 +515,11 @@ router.patch('/:id/assign', async (req, res) => {
 
     const io = getIO();
     io.to('admin').to('responder').emit('crash:assigned', updatedCrash);
-// Also notify the assigned responder if applicable
+
 if (responder_id) {
   io.to(`user_${responder_id}`).emit('crash:assigned', updatedCrash);
 }
+io.to(`user_${updatedCrash.user_id}`).emit('crash:assigned', updatedCrash);
 
     const { data: crashResponder } = await supabase
   .from('users')
@@ -525,13 +527,18 @@ if (responder_id) {
   .eq('id', responder_id)
   .single();
 
+  const responderName = crashResponder
+  ? `${crashResponder.first_name} ${crashResponder.last_name}`.trim()
+  : 'Responder';
+const actorName = `${req.user.first_name ?? ''} ${req.user.last_name ?? ''}`.trim() || 'Admin';
+
 await logAction({
   userId:     req.user.id,
   recordId:   updatedCrash.id,
   action:     'assigned',
   entityName: 'crash_event',
   status:     updatedCrash.status,
-  message:    `${req.user.name ?? 'Admin'} assigned Crash #${updatedCrash.id} to ${crashResponder?.name ?? 'Responder'} `.trim(),
+  message:    `${actorName} assigned Crash #${updatedCrash.id} to ${responderName}`,
 });
 
     res.json({
@@ -618,7 +625,7 @@ router.patch('/:id/status', async (req, res) => {
 
     const io = getIO();
     io.to('admin').to('responder').emit("crash:updated", data);
-
+    io.to(`user_${data.user_id}`).emit("crash:updated", data);
 
     if (status === 'resolved' || status === 'cancelled') {
   await logAction({
@@ -627,7 +634,7 @@ router.patch('/:id/status', async (req, res) => {
     action:     status,
     entityName: 'crash_event',
     status:     data.status,
-    message:    `${req.user.name ?? 'Admin'} ${status} Crash #${data.id}`.trim(),
+    message:    `${actorName} assigned Crash #${updatedCrash.id} to ${responderName}`,
   });
 }
     res.json(data);
@@ -827,6 +834,10 @@ router.delete('/:id', async (req, res) => {
       .eq('id', id);
 
     if (error) throw error;
+
+    
+const io = getIO();
+io.emit("crash:deleted", { id });
 
     res.json({ message: 'Crash event deleted' });
 

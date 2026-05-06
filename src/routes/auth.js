@@ -302,7 +302,7 @@ router.post('/login', async (req, res) => {
         name: `${user.first_name} ${user.last_name}`
       },
       process.env.JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '1d' }
     );
 
 
