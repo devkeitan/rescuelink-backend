@@ -634,7 +634,7 @@ router.patch('/:id/status', async (req, res) => {
     action:     status,
     entityName: 'crash_event',
     status:     data.status,
-    message:    `${actorName} assigned Crash #${updatedCrash.id} to ${responderName}`,
+    message:    `${actorName} ${status} Crash #${data.id}`,
   });
 }
     res.json(data);

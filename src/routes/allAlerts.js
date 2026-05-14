@@ -138,6 +138,32 @@ router.get('/', async (req, res) => {
       return query;
     };
 
+        // ── BLE query builder
+    const buildBleQuery = () => {
+      let query = supabase
+        .from('ble')
+        .select(`
+          *,
+          user:user_id(id, first_name, last_name, email, user_phone_number),
+          responder_assignments:ble_responder_assignments(
+            id, status, assigned_at, responded_at, resolved_at, unassigned_at,
+            responder:responder_id(id, first_name, last_name, user_phone_number)
+          ),
+          vehicle_assignments:ble_vehicle_assignments(
+            id, status, assigned_at, unassigned_at,
+            vehicle:vehicle_id(id, license_plate, vehicle_type, model, status)
+          )
+        `, { count: 'exact' })
+        .order('timestamp', { ascending: false });
+
+      // BLE timestamp is a Unix number, so compare as number
+      if (from)   query = query.gte('timestamp', Number(new Date(from).getTime()));
+      if (to)     query = query.lte('timestamp', Number(new Date(to).getTime()));
+      if (userRole === 'user') query = query.eq('user_id', userId);
+
+      return query;
+    };
+
     // ── Fetch alerts
     let alerts = [];
     if (type === 'alert' || type === 'all') {
@@ -172,8 +198,26 @@ router.get('/', async (req, res) => {
       }));
     }
 
+
+    // ── Fetch BLE events
+    let bleEvents = [];
+    if (type === 'ble' || type === 'all') {
+      const { data, error } = await buildBleQuery();
+      if (error) throw error;
+      bleEvents = (data || []).map(item => ({
+        type: 'ble',
+        id: item.id,
+        userId: item.user_id,
+        status: null,           // BLE has no top-level status; it's inside assignments
+        timestamp: new Date(item.timestamp).toISOString(), // convert Unix → ISO so sorting works
+        latitude: item.latitude,
+        longitude: item.longitude,
+        data: item
+      }));
+    }
+
     // ── Combine, sort, paginate
-    const combined = [...alerts, ...crashes]
+    const combined = [...alerts, ...crashes, ...bleEvents]
       .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
     const total = combined.length;
