@@ -157,8 +157,8 @@ router.get('/', async (req, res) => {
         .order('timestamp', { ascending: false });
 
       // BLE timestamp is a Unix number, so compare as number
-      if (from)   query = query.gte('timestamp', Number(new Date(from).getTime()));
-      if (to)     query = query.lte('timestamp', Number(new Date(to).getTime()));
+     if (from) query = query.gte('timestamp', Math.floor(new Date(from).getTime() / 1000));
+if (to)   query = query.lte('timestamp', Math.floor(new Date(to).getTime() / 1000));
       if (userRole === 'user') query = query.eq('user_id', userId);
 
       return query;
@@ -208,8 +208,8 @@ router.get('/', async (req, res) => {
         type: 'ble',
         id: item.id,
         userId: item.user_id,
-        status: null,           // BLE has no top-level status; it's inside assignments
-        timestamp: new Date(item.timestamp).toISOString(), // convert Unix → ISO so sorting works
+        status: item.status,         
+        timestamp: new Date(item.timestamp * 1000).toISOString(),
         latitude: item.latitude,
         longitude: item.longitude,
         data: item

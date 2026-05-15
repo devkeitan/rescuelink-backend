@@ -530,7 +530,9 @@ io.to(`user_${updatedCrash.user_id}`).emit('crash:assigned', updatedCrash);
   const responderName = crashResponder
   ? `${crashResponder.first_name} ${crashResponder.last_name}`.trim()
   : 'Responder';
+
 const actorName = `${req.user.first_name ?? ''} ${req.user.last_name ?? ''}`.trim() || 'Admin';
+
 
 await logAction({
   userId:     req.user.id,
@@ -628,6 +630,10 @@ router.patch('/:id/status', async (req, res) => {
     io.to(`user_${data.user_id}`).emit("crash:updated", data);
 
     if (status === 'resolved' || status === 'cancelled') {
+
+       const actorName =
+    `${req.user.first_name ?? ''} ${req.user.last_name ?? ''}`.trim() || 'Admin';
+
   await logAction({
     userId:     req.user.id,
     recordId:   data.id,

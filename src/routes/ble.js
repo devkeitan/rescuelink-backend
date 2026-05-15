@@ -19,6 +19,7 @@ router.post('/', authMiddleware, async (req, res) => {
       latitude: latitude ? parseFloat(latitude) : null,
       longitude: longitude ? parseFloat(longitude) : null,
       timestamp,
+      status: 'pending',
     };
 
     const { data: bleDataRows, error: insertError } = await supabase
@@ -46,6 +47,7 @@ router.post('/', authMiddleware, async (req, res) => {
   latitude: bleDataRows.latitude,
   longitude: bleDataRows.longitude,
   timestamp: bleDataRows.timestamp,
+  status: bleDataRows.status,
 },
       user,   
     });
@@ -112,6 +114,112 @@ router.get('/', authMiddleware, async (req, res) => {
   }
 });
 
+router.get('/:id', authMiddleware, async (req, res) => {
+  try {
+    const bleId = parseInt(req.params.id);
+
+    if (!bleId || isNaN(bleId)) {
+      return res.status(400).json({ message: 'Valid BLE id is required' });
+    }
+
+    const { data, error } = await supabase
+      .from('ble')
+      .select(`
+        *,
+        user:user_id(id, first_name, last_name, email, user_phone_number),
+        responder_assignments:ble_responder_assignments(
+          id, status, assigned_at, responded_at, resolved_at, unassigned_at,
+          responder:responder_id(id, first_name, last_name, user_phone_number)
+        ),
+        vehicle_assignments:ble_vehicle_assignments(
+          id, status, assigned_at, unassigned_at,
+          vehicle:vehicle_id(id, license_plate, vehicle_type, model, status)
+        )
+      `)
+      .eq('id', bleId)
+      .single();
+
+    if (error) throw error;
+
+    if (!data) {
+      return res.status(404).json({ message: 'BLE record not found' });
+    }
+
+    res.json({ message: 'BLE record fetched', data });
+  } catch (error) {
+    console.error('Get BLE by ID error:', error);
+    res.status(500).json({ message: error.message || 'Server error' });
+  }
+});
+
+router.patch('/:id/status', authMiddleware, async (req, res) => {
+  try {
+    const bleId = parseInt(req.params.id);
+    const { status } = req.body;
+
+    if (!bleId || isNaN(bleId)) {
+      return res.status(400).json({ message: 'Valid BLE id is required' });
+    }
+
+    const validStatuses = ['pending', 'responding', 'resolved', 'cancelled'];
+    if (!status || !validStatuses.includes(status)) {
+      return res.status(400).json({ 
+        message: `Status must be one of: ${validStatuses.join(', ')}` 
+      });
+    }
+
+    const { data, error } = await supabase
+      .from('ble')
+      .update({ status })
+      .eq('id', bleId)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+
+    if (!data) {
+      return res.status(404).json({ message: 'BLE record not found' });
+    }
+      if (status === 'resolved' || status === 'cancelled') {
+
+      // First get all active vehicle assignments for this BLE incident
+      const { data: activeAssignments, error: fetchError } = await supabase
+        .from('ble_vehicle_assignments')
+        .select('vehicle_id')
+        .eq('ble_id', bleId)
+        .is('unassigned_at', null);
+
+      if (fetchError) throw fetchError;
+
+      if (activeAssignments?.length > 0) {
+        const vehicleIds = activeAssignments.map(a => a.vehicle_id);
+
+        // Mark assignments as unassigned
+        const { error: unassignError } = await supabase
+          .from('ble_vehicle_assignments')
+          .update({ unassigned_at: new Date().toISOString() })
+          .eq('ble_id', bleId)
+          .is('unassigned_at', null);
+
+        if (unassignError) throw unassignError;
+
+        // Release vehicles back to available
+        const { error: vehicleReleaseError } = await supabase
+          .from('vehicles')
+          .update({ status: 'available' })
+          .in('id', vehicleIds);
+
+        if (vehicleReleaseError) throw vehicleReleaseError;
+      }
+    }
+
+    res.json({ message: 'BLE status updated', data });
+  } catch (error) {
+    console.error('Update BLE status error:', error);
+    res.status(500).json({ message: error.message || 'Server error' });
+  }
+});
+
 router.patch('/:id/responders', authMiddleware, async (req, res) => {
   try {
     const bleId = parseInt(req.params.id);
@@ -148,6 +256,13 @@ router.patch('/:id/responders', authMiddleware, async (req, res) => {
 
     if (error) throw error;
 
+     const { error: bleUpdateError } = await supabase
+      .from('ble')
+      .update({ status: 'responding' })
+      .eq('id', bleId);
+
+    if (bleUpdateError) throw bleUpdateError;
+
     res.json({
       message: 'Responder(s) assigned successfully',
       data,
@@ -157,7 +272,6 @@ router.patch('/:id/responders', authMiddleware, async (req, res) => {
     res.status(500).json({ message: error.message || 'Server error' });
   }
 });
-
 router.patch('/:id/vehicles', authMiddleware, async (req, res) => {
   try {
     const bleId = parseInt(req.params.id);
@@ -192,6 +306,22 @@ router.patch('/:id/vehicles', authMiddleware, async (req, res) => {
 
     if (error) throw error;
 
+    // Update each assigned vehicle's status so it no longer appears as available
+    const { error: vehicleUpdateError } = await supabase
+      .from('vehicles')
+      .update({ status: 'assigned' })
+      .in('id', vehicle_ids.map(Number));
+
+    if (vehicleUpdateError) throw vehicleUpdateError;
+
+    // Update BLE incident status to responding
+    const { error: bleUpdateError } = await supabase
+      .from('ble')
+      .update({ status: 'responding' })
+      .eq('id', bleId);
+
+    if (bleUpdateError) throw bleUpdateError;
+
     res.json({
       message: 'Vehicle(s) assigned successfully',
       data,
@@ -201,7 +331,6 @@ router.patch('/:id/vehicles', authMiddleware, async (req, res) => {
     res.status(500).json({ message: error.message || 'Server error' });
   }
 });
-
 
 /**
  * @swagger
